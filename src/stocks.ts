@@ -183,38 +183,67 @@ async function fetchFinnhubSnapshot(
   candleUrl.searchParams.set('to', `${Math.floor(now.getTime() / 1000)}`)
   candleUrl.searchParams.set('token', apiKey)
 
-  const [quote, profile, candles] = await Promise.all([
+  const fallback = buildMockSnapshot(ticker, range)
+  const [quote, profile, candles] = await Promise.allSettled([
     fetchJson<FinnhubQuote>(quoteUrl.toString()),
     fetchJson<FinnhubProfile>(profileUrl.toString()),
     fetchJson<FinnhubCandles>(candleUrl.toString()),
   ])
 
-  if (!quote.c || !profile.name || candles.s !== 'ok' || !candles.c?.length) {
-    throw new Error('Incomplete Finnhub response')
+  const quoteData =
+    quote.status === 'fulfilled' && typeof quote.value.c === 'number'
+      ? quote.value
+      : null
+
+  if (!quoteData) {
+    throw new Error('Quote request failed')
   }
+
+  const profileData = profile.status === 'fulfilled' ? profile.value : null
+  const candleData =
+    candles.status === 'fulfilled' &&
+    candles.value.s === 'ok' &&
+    candles.value.c?.length
+      ? candles.value.c
+      : null
+
+  const history = candleData
+    ? mergeCurrentPriceIntoHistory(candleData, quoteData.c)
+    : mergeCurrentPriceIntoHistory(
+        fallback.history.map((point) => point.value),
+        quoteData.c,
+      )
+
+  const resolvedName = profileData?.name || fallback.name
+  const resolvedExchange = profileData?.exchange || fallback.exchange
+  const resolvedDescription =
+    profileData?.finnhubIndustry && profileData.country
+      ? `${profileData.finnhubIndustry} company based in ${profileData.country}.`
+      : fallback.description
+  const resolvedMarketCap =
+    typeof profileData?.marketCapitalization === 'number' && profileData.marketCapitalization > 0
+      ? formatCompactNumber(profileData.marketCapitalization * 1_000_000)
+      : fallback.marketCapLabel
 
   return {
     ticker,
-    name: profile.name,
-    exchange: profile.exchange || 'Market',
-    price: quote.c,
-    priceChange: quote.d,
-    changePercent: quote.dp,
-    open: quote.o,
-    high: quote.h,
-    low: quote.l,
-    marketCapLabel: formatCompactNumber((profile.marketCapitalization ?? 0) * 1_000_000),
-    volumeLabel: formatCompactNumber(quote.t ? Math.round(Math.abs(quote.t / 1000)) * 250 : 0),
-    description:
-      profile.finnhubIndustry && profile.country
-        ? `${profile.finnhubIndustry} company based in ${profile.country}.`
-        : `Real-time market data for ${ticker}.`,
+    name: resolvedName,
+    exchange: resolvedExchange,
+    price: quoteData.c,
+    priceChange: quoteData.d,
+    changePercent: quoteData.dp,
+    open: quoteData.o || fallback.open,
+    high: quoteData.h || Math.max(...history),
+    low: quoteData.l || Math.min(...history),
+    marketCapLabel: resolvedMarketCap,
+    volumeLabel: formatCompactNumber(quoteData.t ? Math.round(Math.abs(quoteData.t / 1000)) * 250 : 0),
+    description: resolvedDescription,
     updatedAtLabel: new Intl.DateTimeFormat('en-US', {
       hour: 'numeric',
       minute: '2-digit',
-    }).format(new Date(quote.t)),
-    dataSource: 'Finnhub',
-    history: candles.c.map((value, index) => ({
+    }).format(new Date(quoteData.t * 1000)),
+    dataSource: candleData ? 'Finnhub' : 'Finnhub quote',
+    history: history.map((value, index) => ({
       label: `${index}`,
       value,
     })),
@@ -362,6 +391,16 @@ function getResolution(range: StockRange) {
     case '5Y':
       return 'M'
   }
+}
+
+function mergeCurrentPriceIntoHistory(history: number[], currentPrice: number) {
+  if (!history.length) {
+    return [currentPrice]
+  }
+
+  const nextHistory = [...history]
+  nextHistory[nextHistory.length - 1] = currentPrice
+  return nextHistory
 }
 
 type FinnhubQuote = {

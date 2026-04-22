@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQueries, useQuery } from '@tanstack/react-query'
 import './App.css'
 import {
   DEFAULT_WATCHLIST,
@@ -38,9 +38,22 @@ function App() {
     window.localStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(watchlist))
   }, [watchlist])
 
+  const sidebarQueries = useQueries({
+    queries: watchlist.map((ticker) => ({
+      queryKey: ['sidebar-stock', ticker, activeRange],
+      queryFn: () => getStockSnapshot(ticker, activeRange),
+      staleTime: 30_000,
+      refetchInterval: 60_000,
+    })),
+  })
+
   const sidebarRows = useMemo(
-    () => watchlist.map((ticker) => getSidebarSnapshot(ticker, activeRange)),
-    [activeRange, watchlist],
+    () =>
+      watchlist.map(
+        (ticker, index) =>
+          sidebarQueries[index]?.data ?? getSidebarSnapshot(ticker, activeRange),
+      ),
+    [activeRange, sidebarQueries, watchlist],
   )
 
   const activeTicker = watchlist.includes(selectedTicker)
@@ -50,7 +63,8 @@ function App() {
   const stockQuery = useQuery({
     queryKey: ['stock', activeTicker, activeRange],
     queryFn: () => getStockSnapshot(activeTicker, activeRange),
-    staleTime: 60_000,
+    staleTime: 15_000,
+    refetchInterval: 30_000,
   })
 
   const selectedStock = stockQuery.data ?? sidebarRows.find((row) => row.ticker === activeTicker)
