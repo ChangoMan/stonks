@@ -3,6 +3,7 @@ import { useQueries, useQuery } from '@tanstack/react-query'
 import './App.css'
 import {
   DEFAULT_WATCHLIST,
+  applyLiveQuote,
   type StockPoint,
   type StockRange,
   getRangeLabel,
@@ -10,6 +11,7 @@ import {
   getStockSnapshot,
   isTickerSymbol,
 } from './stocks'
+import { useFinnhubLiveQuotes } from './useFinnhubLiveQuotes'
 
 const RANGE_OPTIONS: StockRange[] = ['1D', '5D', '1M', '6M', 'YTD', '1Y', '5Y']
 const WATCHLIST_STORAGE_KEY = 'vite-stonks.watchlist'
@@ -38,6 +40,8 @@ function App() {
     window.localStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(watchlist))
   }, [watchlist])
 
+  const liveQuotes = useFinnhubLiveQuotes(watchlist)
+
   const sidebarQueries = useQueries({
     queries: watchlist.map((ticker) => ({
       queryKey: ['sidebar-stock', ticker, activeRange],
@@ -51,9 +55,12 @@ function App() {
     () =>
       watchlist.map(
         (ticker, index) =>
-          sidebarQueries[index]?.data ?? getSidebarSnapshot(ticker, activeRange),
+          applyLiveQuote(
+            sidebarQueries[index]?.data ?? getSidebarSnapshot(ticker, activeRange),
+            liveQuotes[ticker],
+          ),
       ),
-    [activeRange, sidebarQueries, watchlist],
+    [activeRange, liveQuotes, sidebarQueries, watchlist],
   )
 
   const activeTicker = watchlist.includes(selectedTicker)
@@ -67,7 +74,10 @@ function App() {
     refetchInterval: 30_000,
   })
 
-  const selectedStock = stockQuery.data ?? sidebarRows.find((row) => row.ticker === activeTicker)
+  const selectedStockBase = stockQuery.data ?? sidebarRows.find((row) => row.ticker === activeTicker)
+  const selectedStock = selectedStockBase
+    ? applyLiveQuote(selectedStockBase, liveQuotes[activeTicker])
+    : undefined
 
   const handleAddTicker = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()

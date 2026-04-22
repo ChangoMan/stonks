@@ -12,6 +12,7 @@ export type StockSnapshot = {
   price: number
   priceChange: number
   changePercent: number
+  previousClose: number
   open: number
   high: number
   low: number
@@ -116,6 +117,11 @@ const tickerCatalog: Record<string, CatalogEntry> = {
 
 export const DEFAULT_WATCHLIST = ['GOOGL', 'AMZN', 'SPY', 'QQQ', 'NVDA', 'AAPL']
 
+export type LiveQuote = {
+  price: number
+  timestamp: number
+}
+
 export function isTickerSymbol(value: unknown): value is string {
   return typeof value === 'string' && /^[A-Z.]{1,8}$/.test(value)
 }
@@ -160,14 +166,42 @@ export function getRangeLabel(range: StockRange) {
   }
 }
 
+export function applyLiveQuote(snapshot: StockSnapshot, liveQuote?: LiveQuote) {
+  if (!liveQuote) {
+    return snapshot
+  }
+
+  const priceChange = liveQuote.price - snapshot.previousClose
+  const changePercent =
+    snapshot.previousClose === 0
+      ? 0
+      : (priceChange / snapshot.previousClose) * 100
+  const history = mergeCurrentPriceIntoHistory(
+    snapshot.history.map((point) => point.value),
+    liveQuote.price,
+  )
+
+  return {
+    ...snapshot,
+    price: liveQuote.price,
+    priceChange,
+    changePercent,
+    high: Math.max(snapshot.high, liveQuote.price),
+    low: Math.min(snapshot.low, liveQuote.price),
+    updatedAtLabel: formatUpdatedAt(liveQuote.timestamp),
+    dataSource: 'Finnhub websocket',
+    history: history.map((value, index) => ({
+      label: snapshot.history[index]?.label ?? `${index}`,
+      value,
+    })),
+  }
+}
+
 async function fetchFinnhubSnapshot(
   ticker: string,
   range: StockRange,
   apiKey: string,
 ): Promise<StockSnapshot> {
-  const now = new Date()
-  const from = getRangeStart(range, now)
-  const resolution = getResolution(range)
   const quoteUrl = new URL('https://finnhub.io/api/v1/quote')
   quoteUrl.searchParams.set('symbol', ticker)
   quoteUrl.searchParams.set('token', apiKey)
@@ -176,18 +210,10 @@ async function fetchFinnhubSnapshot(
   profileUrl.searchParams.set('symbol', ticker)
   profileUrl.searchParams.set('token', apiKey)
 
-  const candleUrl = new URL('https://finnhub.io/api/v1/stock/candle')
-  candleUrl.searchParams.set('symbol', ticker)
-  candleUrl.searchParams.set('resolution', resolution)
-  candleUrl.searchParams.set('from', `${Math.floor(from.getTime() / 1000)}`)
-  candleUrl.searchParams.set('to', `${Math.floor(now.getTime() / 1000)}`)
-  candleUrl.searchParams.set('token', apiKey)
-
   const fallback = buildMockSnapshot(ticker, range)
-  const [quote, profile, candles] = await Promise.allSettled([
+  const [quote, profile] = await Promise.allSettled([
     fetchJson<FinnhubQuote>(quoteUrl.toString()),
     fetchJson<FinnhubProfile>(profileUrl.toString()),
-    fetchJson<FinnhubCandles>(candleUrl.toString()),
   ])
 
   const quoteData =
@@ -200,19 +226,10 @@ async function fetchFinnhubSnapshot(
   }
 
   const profileData = profile.status === 'fulfilled' ? profile.value : null
-  const candleData =
-    candles.status === 'fulfilled' &&
-    candles.value.s === 'ok' &&
-    candles.value.c?.length
-      ? candles.value.c
-      : null
-
-  const history = candleData
-    ? mergeCurrentPriceIntoHistory(candleData, quoteData.c)
-    : mergeCurrentPriceIntoHistory(
-        fallback.history.map((point) => point.value),
-        quoteData.c,
-      )
+  const history = mergeCurrentPriceIntoHistory(
+    fallback.history.map((point) => point.value),
+    quoteData.c,
+  )
 
   const resolvedName = profileData?.name || fallback.name
   const resolvedExchange = profileData?.exchange || fallback.exchange
@@ -232,19 +249,17 @@ async function fetchFinnhubSnapshot(
     price: quoteData.c,
     priceChange: quoteData.d,
     changePercent: quoteData.dp,
+    previousClose: quoteData.pc || fallback.previousClose,
     open: quoteData.o || fallback.open,
     high: quoteData.h || Math.max(...history),
     low: quoteData.l || Math.min(...history),
     marketCapLabel: resolvedMarketCap,
     volumeLabel: formatCompactNumber(quoteData.t ? Math.round(Math.abs(quoteData.t / 1000)) * 250 : 0),
     description: resolvedDescription,
-    updatedAtLabel: new Intl.DateTimeFormat('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
-    }).format(new Date(quoteData.t * 1000)),
-    dataSource: candleData ? 'Finnhub' : 'Finnhub quote',
+    updatedAtLabel: formatUpdatedAt(quoteData.t),
+    dataSource: 'Finnhub quote',
     history: history.map((value, index) => ({
-      label: `${index}`,
+      label: fallback.history[index]?.label ?? `${index}`,
       value,
     })),
   }
@@ -278,6 +293,7 @@ function buildMockSnapshot(ticker: string, range: StockRange): StockSnapshot {
     price,
     priceChange,
     changePercent,
+    previousClose: previous,
     open,
     high,
     low,
@@ -344,55 +360,6 @@ function formatCompactNumber(value: number) {
   }).format(value)
 }
 
-function getRangeStart(range: StockRange, now: Date) {
-  const start = new Date(now)
-  switch (range) {
-    case '1D':
-      start.setDate(start.getDate() - 1)
-      break
-    case '5D':
-      start.setDate(start.getDate() - 5)
-      break
-    case '1M':
-      start.setMonth(start.getMonth() - 1)
-      break
-    case '6M':
-      start.setMonth(start.getMonth() - 6)
-      break
-    case 'YTD':
-      start.setMonth(0, 1)
-      start.setHours(0, 0, 0, 0)
-      break
-    case '1Y':
-      start.setFullYear(start.getFullYear() - 1)
-      break
-    case '5Y':
-      start.setFullYear(start.getFullYear() - 5)
-      break
-  }
-
-  return start
-}
-
-function getResolution(range: StockRange) {
-  switch (range) {
-    case '1D':
-      return '30'
-    case '5D':
-      return '60'
-    case '1M':
-      return 'D'
-    case '6M':
-      return 'W'
-    case 'YTD':
-      return 'W'
-    case '1Y':
-      return 'W'
-    case '5Y':
-      return 'M'
-  }
-}
-
 function mergeCurrentPriceIntoHistory(history: number[], currentPrice: number) {
   if (!history.length) {
     return [currentPrice]
@@ -403,6 +370,14 @@ function mergeCurrentPriceIntoHistory(history: number[], currentPrice: number) {
   return nextHistory
 }
 
+function formatUpdatedAt(unixSeconds: number) {
+  return new Intl.DateTimeFormat('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+  }).format(new Date(unixSeconds * 1000))
+}
+
 type FinnhubQuote = {
   c: number
   d: number
@@ -410,6 +385,7 @@ type FinnhubQuote = {
   h: number
   l: number
   o: number
+  pc: number
   t: number
 }
 
@@ -419,9 +395,4 @@ type FinnhubProfile = {
   finnhubIndustry?: string
   marketCapitalization?: number
   name?: string
-}
-
-type FinnhubCandles = {
-  c?: number[]
-  s: string
 }
