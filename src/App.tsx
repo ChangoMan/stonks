@@ -11,6 +11,7 @@ import {
   getStockSnapshot,
   isTickerSymbol,
 } from './stocks'
+import { TradingViewWidget } from './TradingViewWidget'
 import { useFinnhubLiveQuotes } from './useFinnhubLiveQuotes'
 
 const RANGE_OPTIONS: StockRange[] = ['1D', '5D', '1M', '6M', 'YTD', '1Y', '5Y']
@@ -214,9 +215,10 @@ function App() {
                 </div>
               </div>
 
-              <LineChart
-                data={selectedStock.history}
-                trend={selectedStock.changePercent >= 0 ? 'up' : 'down'}
+              <TradingViewWidget
+                ticker={selectedStock.ticker}
+                exchange={selectedStock.exchange}
+                range={activeRange}
               />
 
               <div className="chart-footer">
@@ -225,39 +227,6 @@ function App() {
                 <Metric label="Low" value={formatPrice(selectedStock.low)} />
                 <Metric label="Volume" value={selectedStock.volumeLabel} />
               </div>
-            </div>
-
-            <div className="info-grid">
-              <article className="info-card">
-                <p className="eyebrow">Company</p>
-                <h3>Snapshot</h3>
-                <p className="info-copy">
-                  {selectedStock.description}
-                </p>
-              </article>
-
-              <article className="info-card">
-                <p className="eyebrow">Quick stats</p>
-                <h3>At a glance</h3>
-                <dl className="stats-list">
-                  <div>
-                    <dt>Market cap</dt>
-                    <dd>{selectedStock.marketCapLabel}</dd>
-                  </div>
-                  <div>
-                    <dt>Range</dt>
-                    <dd>{getRangeLabel(activeRange)}</dd>
-                  </div>
-                  <div>
-                    <dt>Source</dt>
-                    <dd>{selectedStock.dataSource}</dd>
-                  </div>
-                  <div>
-                    <dt>Updated</dt>
-                    <dd>{selectedStock.updatedAtLabel}</dd>
-                  </div>
-                </dl>
-              </article>
             </div>
 
             {stockQuery.isFetching ? (
@@ -294,41 +263,6 @@ function Sparkline({
     <svg className="sparkline" viewBox="0 0 120 44" preserveAspectRatio="none" aria-hidden="true">
       <line x1="0" x2="120" y1="22" y2="22" className="sparkline-guide" />
       <polyline points={getChartPoints(data, 120, 44)} className={`sparkline-line ${trend}`} />
-    </svg>
-  )
-}
-
-function LineChart({
-  data,
-  trend,
-}: {
-  data: StockPoint[]
-  trend: 'up' | 'down'
-}) {
-  if (data.length < 2) {
-    return <div className="line-chart" />
-  }
-
-  const areaPoints = `${getChartPoints(data, 640, 280)} 640,280 0,280`
-
-  return (
-    <svg className="line-chart" viewBox="0 0 640 280" preserveAspectRatio="none" role="img">
-      <defs>
-        <linearGradient id="chart-fill-up" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stopColor="rgba(31, 175, 120, 0.32)" />
-          <stop offset="100%" stopColor="rgba(31, 175, 120, 0)" />
-        </linearGradient>
-        <linearGradient id="chart-fill-down" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stopColor="rgba(227, 78, 86, 0.26)" />
-          <stop offset="100%" stopColor="rgba(227, 78, 86, 0)" />
-        </linearGradient>
-      </defs>
-      {Array.from({ length: 5 }).map((_, index) => {
-        const y = 32 + index * 52
-        return <line key={y} x1="0" x2="640" y1={y} y2={y} className="chart-grid" />
-      })}
-      <polygon points={areaPoints} className={`chart-area ${trend}`} />
-      <polyline points={getChartPoints(data, 640, 280)} className={`chart-line ${trend}`} />
     </svg>
   )
 }
