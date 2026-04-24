@@ -4,14 +4,13 @@ import './App.css'
 import {
   DEFAULT_WATCHLIST,
   applyLiveQuote,
-  type StockPoint,
   type StockRange,
   getRangeLabel,
   getSidebarSnapshot,
   getStockSnapshot,
   isTickerSymbol,
 } from './stocks'
-import { TradingViewWidget } from './TradingViewWidget'
+import { LightweightChart } from './LightweightChart'
 import { useFinnhubLiveQuotes } from './useFinnhubLiveQuotes'
 
 const RANGE_OPTIONS: StockRange[] = ['1D', '5D', '1M', '6M', 'YTD', '1Y', '5Y']
@@ -160,7 +159,12 @@ function App() {
                   <p>{stock.name}</p>
                 </div>
 
-                <Sparkline data={stock.history} trend={stock.changePercent >= 0 ? 'up' : 'down'} />
+                <LightweightChart
+                  data={stock.history}
+                  range={activeRange}
+                  trend={stock.changePercent >= 0 ? 'up' : 'down'}
+                  variant="sparkline"
+                />
 
                 <div className="price-copy">
                   <strong>{formatPrice(stock.price)}</strong>
@@ -215,10 +219,11 @@ function App() {
                 </div>
               </div>
 
-              <TradingViewWidget
-                ticker={selectedStock.ticker}
-                exchange={selectedStock.exchange}
+              <LightweightChart
+                data={selectedStock.history}
                 range={activeRange}
+                trend={selectedStock.changePercent >= 0 ? 'up' : 'down'}
+                variant="detail"
               />
 
               <div className="chart-footer">
@@ -246,40 +251,6 @@ function Metric({ label, value }: { label: string; value: string }) {
       <strong>{value}</strong>
     </div>
   )
-}
-
-function Sparkline({
-  data,
-  trend,
-}: {
-  data: StockPoint[]
-  trend: 'up' | 'down'
-}) {
-  if (data.length < 2) {
-    return <div className="sparkline" />
-  }
-
-  return (
-    <svg className="sparkline" viewBox="0 0 120 44" preserveAspectRatio="none" aria-hidden="true">
-      <line x1="0" x2="120" y1="22" y2="22" className="sparkline-guide" />
-      <polyline points={getChartPoints(data, 120, 44)} className={`sparkline-line ${trend}`} />
-    </svg>
-  )
-}
-
-function getChartPoints(data: StockPoint[], width: number, height: number) {
-  const values = data.map((point) => point.value)
-  const min = Math.min(...values)
-  const max = Math.max(...values)
-  const span = max - min || 1
-
-  return data
-    .map((point, index) => {
-      const x = (index / (data.length - 1)) * width
-      const y = height - ((point.value - min) / span) * (height - 24) - 12
-      return `${x},${y}`
-    })
-    .join(' ')
 }
 
 function formatPrice(value: number) {
